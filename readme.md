@@ -1,4 +1,26 @@
-# PiPup
+# PiPup (modernized)
+
+A maintained fork of [rogro82/PiPup](https://github.com/rogro82/PiPup), updated for current Android build tools and Android TV versions.
+
+**What's new in this fork**
+
+- Builds with current tooling (Gradle 8.11, Android Gradle Plugin 8.7, Kotlin 2.0, AndroidX). The original no longer builds because jcenter has shut down.
+- Targets Android 15 and handles newer foreground-service and notification rules.
+- Video popups use Media3 ExoPlayer: proper RTSP support for IP cameras (forced over TCP for reliability), HLS (`.m3u8`) streams, low-latency buffering, automatic retries, and the popup appears immediately instead of waiting for the stream.
+- New optional `"muted": true` on video media, e.g. `"media": { "video": { "uri": "rtsp://...", "width": 480, "muted": true } }`.
+- `GET /` (or `/status`) on port 7979 returns a simple "running" response for health checks.
+- Plain `http://` image, video and web URLs on the local network work (cleartext traffic allowed).
+- The app's screen warns you if the overlay permission is missing.
+- Bug fixes: JSON bodies are fully read, invalid positions/colours no longer crash, multipart `messageSize`/`messageColor` defaults fixed.
+
+The request API is unchanged, so existing Home Assistant (or other) integrations keep working.
+
+**Download:** every push to the `modernize` branch is built automatically by GitHub Actions. Get `pipup-modern.apk` from the [latest release](../../releases/tag/latest). If you had the original PiPup from the Play Store beta installed, uninstall it first (the signatures differ), then sideload this APK and run the `adb shell appops` command below.
+
+---
+
+*Original readme follows.*
+
 
 PiPup is an application that allows displaying user-defined custom notifications on Android TV.
 

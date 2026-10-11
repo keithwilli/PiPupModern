@@ -1,0 +1,55 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "modernize", "master", "main" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk pipup-modern.apk
+
+      - name: Upload APK as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipup-modern-apk
+          path: pipup-modern.apk
+
+      # Publishes the APK to a fixed "latest" pre-release so it can be downloaded
+      # from a stable URL (handy for the Downloader app on Android TV).
+      - name: Publish latest pre-release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/modernize'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest pipup-modern.apk \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "Latest build (modernize branch)" \
+            --notes "Automatic build of commit ${GITHUB_SHA::7}. Debug-signed APK for sideloading."

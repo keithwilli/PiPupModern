@@ -3,19 +3,14 @@ package nl.rogro82.pipup
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.support.v4.content.ContextCompat.startForegroundService
 
+/** Starts the PiPup service after the device boots or the app is updated. */
 class Receiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        with(context) {
-            val serviceIntent = Intent(this, PiPupService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED -> PiPupService.start(context)
         }
     }
 }

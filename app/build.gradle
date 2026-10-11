@@ -1,36 +1,70 @@
-apply plugin: 'com.android.application'
-
-apply plugin: 'kotlin-android'
-
-apply plugin: 'kotlin-android-extensions'
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
 
 android {
-    compileSdkVersion 28
+    namespace 'nl.rogro82.pipup'
+    compileSdk 35
+
     defaultConfig {
         applicationId "nl.rogro82.pipup"
-        minSdkVersion 24
-        targetSdkVersion 28
-        versionCode 6
-        versionName "0.1.5-beta"
+        minSdk 24
+        targetSdk 35
+        versionCode 7
+        versionName "0.2.0-modern"
     }
+
+    // A fixed, non-secret debug key committed to the repo, so every automatic build is
+    // signed the same way and new versions install over old ones without uninstalling.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    lint {
+        // Android TV app: don't fail CI builds on lint warnings
+        abortOnError false
+    }
 }
 
 dependencies {
-    implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation"org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-    implementation 'com.android.support:leanback-v17:28.0.0'
-    implementation 'com.android.support:appcompat-v7:28.0.0'
-    implementation 'com.github.bumptech.glide:glide:3.8.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.leanback:leanback:1.0.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.9.+'
-    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin:2.9.+'
+    // Image loading (image popups)
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
 
+    // Video playback with RTSP support (camera streams)
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+
+    // Embedded HTTP server
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
-    implementation 'com.android.support.constraint:constraint-layout:1.1.3'
 }
