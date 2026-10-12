@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -77,14 +78,18 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
     /**
      * Plays a video or live camera stream using Media3 ExoPlayer.
      * Supports rtsp:// (camera streams), HLS (.m3u8) and regular http(s) video files.
+     * Shows a status line inside the popup while connecting or when playback fails,
+     * and records each step in [Diagnostics] for the status page.
      */
     @OptIn(UnstableApi::class)
     private class Video(context: Context, popup: PopupProps, val media: PopupProps.Media.Video) :
         PopupView(context, popup) {
 
         private var mPlayer: ExoPlayer? = null
+        private var mStatus: TextView? = null
         private val mHandler = Handler(Looper.getMainLooper())
         private var mRetries = 0
+        private var mFirstFrameShown = false
 
         init {
             create()
@@ -94,6 +99,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             super.create()
 
             val frame = findViewById<FrameLayout>(R.id.popup_frame)
+            val safeUri = Diagnostics.redact(media.uri)
 
             // Small buffers so live camera streams start quickly and stay close to real time
             val loadControl = DefaultLoadControl.Builder()
@@ -107,11 +113,27 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                     volume = if (media.muted) 0f else 1f
                     playWhenReady = true
                     addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            Diagnostics.record("Player state: ${stateName(playbackState)}")
+                        }
+
+                        override fun onRenderedFirstFrame() {
+                            mFirstFrameShown = true
+                            Diagnostics.record("Video showing")
+                            mStatus?.visibility = View.GONE
+                        }
+
                         override fun onPlayerError(error: PlaybackException) {
-                            Log.e(LOG_TAG, "Playback error for ${redact(media.uri)}: ${error.errorCodeName}", error)
+                            val reason = describe(error)
+                            Log.e(LOG_TAG, "Playback error for $safeUri: $reason", error)
+                            Diagnostics.record("ERROR: $reason")
+
                             if (mRetries < MAX_RETRIES) {
                                 mRetries++
+                                showStatus("$reason\nRetrying ($mRetries/$MAX_RETRIES)…")
                                 mHandler.postDelayed({ startPlayback() }, RETRY_DELAY_MS)
+                            } else {
+                                showStatus(reason)
                             }
                         }
                     })
@@ -132,7 +154,38 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 gravity = Gravity.CENTER
             })
 
+            // Status text shown on top of the video area until the first frame arrives
+            mStatus = TextView(context).apply {
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(16, 16, 16, 16)
+                text = "Connecting…"
+            }
+            frame.addView(mStatus, FrameLayout.LayoutParams(media.width, height).apply {
+                gravity = Gravity.CENTER
+            })
+
+            Diagnostics.record("Opening $safeUri")
             startPlayback()
+
+            // If nothing has appeared after a while and no error was reported, say so
+            mHandler.postDelayed({
+                if (!mFirstFrameShown) {
+                    val state = mPlayer?.playbackState?.let { stateName(it) } ?: "released"
+                    Diagnostics.record("No video after ${WATCHDOG_MS / 1000}s (player state: $state)")
+                    if (mStatus?.text?.toString() == "Connecting…") {
+                        showStatus("No video received yet\n(player state: $state)")
+                    }
+                }
+            }, WATCHDOG_MS)
+        }
+
+        private fun showStatus(text: String) {
+            mStatus?.apply {
+                this.text = text
+                visibility = View.VISIBLE
+            }
         }
 
         private fun startPlayback() {
@@ -144,6 +197,7 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
                 // TCP transport is far more reliable than UDP for most IP cameras
                 val source = RtspMediaSource.Factory()
                     .setForceUseRtpTcp(true)
+                    .setTimeoutMs(RTSP_TIMEOUT_MS)
                     .createMediaSource(mediaItem)
                 player.setMediaSource(source)
             } else {
@@ -165,6 +219,50 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
         companion object {
             const val MAX_RETRIES = 3
             const val RETRY_DELAY_MS = 1000L
+            const val WATCHDOG_MS = 12000L
+            const val RTSP_TIMEOUT_MS = 8000L
+
+            fun stateName(state: Int): String = when (state) {
+                Player.STATE_IDLE -> "idle"
+                Player.STATE_BUFFERING -> "connecting/buffering"
+                Player.STATE_READY -> "ready"
+                Player.STATE_ENDED -> "ended"
+                else -> "unknown ($state)"
+            }
+
+            /** Turns a playback error into a short, human-readable reason. */
+            fun describe(error: PlaybackException): String {
+                val hint = when (error.errorCode) {
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+                        "Can't connect to the camera. Check its IP address and that RTSP is turned on."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
+                        "The camera didn't answer in time. Check its IP address and that RTSP is turned on."
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                        "The camera refused the request. Check the username, password and stream name."
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+                    PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+                    PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                        "This TV can't decode the camera's video format."
+                    else -> "Playback failed."
+                }
+
+                // Find the most specific message in the cause chain (e.g. an RTSP 401)
+                var detail: String? = null
+                var cause: Throwable? = error
+                while (cause != null) {
+                    cause.message?.takeIf { it.isNotBlank() }?.let { detail = it }
+                    cause = cause.cause
+                }
+                val shortDetail = detail?.let { Diagnostics.redact(it).take(140) }
+
+                return buildString {
+                    append(hint)
+                    append(" [")
+                    append(error.errorCodeName)
+                    if (shortDetail != null) append(": ").append(shortDetail)
+                    append("]")
+                }
+            }
         }
     }
 
@@ -285,9 +383,6 @@ sealed class PopupView(context: Context, val popup: PopupProps) : LinearLayout(c
             } catch (e: IllegalArgumentException) {
                 fallback
             }
-
-        /** Hides credentials (user:password@) from URLs before logging them. */
-        private fun redact(uri: String): String = uri.replace(Regex("//[^/@]*@"), "//***@")
 
         fun build(context: Context, popup: PopupProps): PopupView {
             return when (val media = popup.media) {

@@ -227,7 +227,11 @@ class PiPupService : Service(), WebServer.Handler {
 
         return when (session.method) {
             NanoHTTPD.Method.GET -> when (session.uri) {
-                "/", "/status" -> ok("PiPup ${Utils.versionName(this)} running")
+                "/", "/status" -> ok(
+                    "PiPup ${Utils.versionName(this)} running\n\n" +
+                            "Recent video events (newest last):\n" +
+                            Diagnostics.report()
+                )
                 else -> invalidRequest("unknown uri: ${session.uri}")
             }
             NanoHTTPD.Method.POST -> when (session.uri) {
